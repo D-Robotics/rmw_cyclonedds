@@ -3569,10 +3569,15 @@ static rmw_ret_t rmw_send_response_request(
   const void * ros_data)
 {
   const cdds_request_wrapper_t wrap = {header, const_cast<void *>(ros_data)};
-  if (dds_write(cs->pub->enth, static_cast<const void *>(&wrap)) >= 0) {
+  dds_return_t ret = dds_write(cs->pub->enth, static_cast<const void *>(&wrap));
+  if (ret >= 0) {
     return RMW_RET_OK;
   } else {
+    RCUTILS_LOG_ERROR_NAMED("rmw_cyclonedds_cpp", "dds_write fail! Return %d", ret);
     RMW_SET_ERROR_MSG("cannot publish data");
+    if (DDS_RETCODE_TIMEOUT == ret) {
+      return RMW_RET_TIMEOUT;
+    }
     return RMW_RET_ERROR;
   }
 }
@@ -3657,7 +3662,8 @@ extern "C" rmw_ret_t rmw_send_response(
   // TODO(eboasson): rmw_service_server_is_available should block the request instead (#191)
   client_present_t st;
   std::chrono::system_clock::time_point tnow = std::chrono::system_clock::now();
-  std::chrono::system_clock::time_point tend = tnow + 100ms;
+  // Response reader checking may cost >100ms
+  std::chrono::system_clock::time_point tend = tnow + 1000ms;
   while ((st =
     check_for_response_reader(
       info->service,
@@ -3670,9 +3676,17 @@ extern "C" rmw_ret_t rmw_send_response(
     case client_present_t::FAILURE:
       break;
     case client_present_t::MAYBE:
+      RCUTILS_LOG_ERROR_NAMED("rmw_cyclonedds_cpp", "check_for_response_reader fail! Return timeout");
       return RMW_RET_TIMEOUT;
     case client_present_t::YES:
-      return rmw_send_response_request(&info->service, header, ros_response);
+      {
+        rmw_ret_t ret =
+              rmw_send_response_request(&info->service, header, ros_response);
+        if (RMW_RET_OK != ret) {
+          RCUTILS_LOG_ERROR_NAMED("rmw_cyclonedds_cpp", "rmw_send_response_request fail! Return %d", ret);
+        }
+        return ret;
+      }
     case client_present_t::GONE:
       return RMW_RET_OK;
   }
