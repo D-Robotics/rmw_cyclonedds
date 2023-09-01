@@ -1445,6 +1445,9 @@ extern "C" rmw_ret_t rmw_deserialize(
   } catch (rmw_cyclonedds_cpp::Exception & e) {
     RMW_SET_ERROR_MSG_WITH_FORMAT_STRING("rmw_serialize: %s", e.what());
     ok = false;
+  } catch (std::runtime_error & e) {
+    RMW_SET_ERROR_MSG_WITH_FORMAT_STRING("rmw_serialize: %s", e.what());
+    ok = false;
   }
 
   return ok ? RMW_RET_OK : RMW_RET_ERROR;
@@ -1496,6 +1499,27 @@ static dds_entity_t create_topic(dds_entity_t pp, struct ddsi_sertopic * sertopi
 {
   dds_entity_t tp = create_topic(pp, sertopic, nullptr);
   return tp;
+}
+
+void set_error_message_from_create_topic(dds_entity_t topic, const std::string & topic_name)
+{
+  assert(topic < 0);
+  if (DDS_RETCODE_BAD_PARAMETER == topic) {
+    const std::string error_msg = "failed to create topic [" + topic_name +
+      "] because the function was given invalid parameters";
+    RMW_SET_ERROR_MSG(error_msg.c_str());
+  } else if (DDS_RETCODE_INCONSISTENT_POLICY == topic) {
+    const std::string error_msg = "failed to create topic [" + topic_name +
+      "] because it's already in use in this context with incompatible QoS settings";
+    RMW_SET_ERROR_MSG(error_msg.c_str());
+  } else if (DDS_RETCODE_PRECONDITION_NOT_MET == topic) {
+    const std::string error_msg = "failed to create topic [" + topic_name +
+      "] because it's already in use in this context with a different message type";
+    RMW_SET_ERROR_MSG(error_msg.c_str());
+  } else {
+    const std::string error_msg = "failed to create topic [" + topic_name + "] for unknown reasons";
+    RMW_SET_ERROR_MSG(error_msg.c_str());
+  }
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -1739,7 +1763,13 @@ static bool dds_qos_to_rmw_qos(const dds_qos_t * dds_qos, rmw_qos_profile_t * qo
         break;
       case DDS_HISTORY_KEEP_ALL:
         qos_policies->history = RMW_QOS_POLICY_HISTORY_KEEP_ALL;
-        qos_policies->depth = (uint32_t) depth;
+        // When using a policy of KEEP_ALL, the depth is meaningless.
+        // CycloneDDS reports this as -1, but the rmw_qos_profile_t structure
+        // expects an unsigned number.  Casting -1 to unsigned would yield
+        // a value of 2^32 - 1, but unfortunately our XML-RPC connection
+        // (used for the command-line tools) doesn't understand anything
+        // larger than 2^31 - 1.  Just set the depth to 0 here instead.
+        qos_policies->depth = 0;
         break;
       default:
         rmw_cyclonedds_cpp::unreachable();
@@ -1869,7 +1899,7 @@ static CddsPublisher * create_cdds_publisher(
   struct ddsi_sertopic * stact;
   topic = create_topic(dds_ppant, sertopic, &stact);
   if (topic < 0) {
-    RMW_SET_ERROR_MSG("failed to create topic");
+    set_error_message_from_create_topic(topic, fqtopic_name);
     goto fail_topic;
   }
   if ((qos = create_readwrite_qos(qos_policies, false)) == nullptr) {
@@ -2244,7 +2274,7 @@ static CddsSubscription * create_cdds_subscription(
     rmw_cyclonedds_cpp::make_message_value_type(type_supports));
   topic = create_topic(dds_ppant, sertopic);
   if (topic < 0) {
-    RMW_SET_ERROR_MSG("failed to create topic");
+    set_error_message_from_create_topic(topic, fqtopic_name);
     goto fail_topic;
   }
   if ((qos = create_readwrite_qos(qos_policies, ignore_local_publications)) == nullptr) {
@@ -3850,7 +3880,7 @@ static rmw_ret_t rmw_init_cs(
   struct ddsi_sertopic * pub_stact;
   pubtopic = create_topic(node->context->impl->ppant, pub_st, &pub_stact);
   if (pubtopic < 0) {
-    RMW_SET_ERROR_MSG("failed to create topic");
+    set_error_message_from_create_topic(pubtopic, pubtopic_name);
     goto fail_pubtopic;
   }
 
@@ -3859,7 +3889,7 @@ static rmw_ret_t rmw_init_cs(
     std::move(sub_msg_ts));
   subtopic = create_topic(node->context->impl->ppant, sub_st);
   if (subtopic < 0) {
-    RMW_SET_ERROR_MSG("failed to create topic");
+    set_error_message_from_create_topic(subtopic, subtopic_name);
     goto fail_subtopic;
   }
   // before proceeding to outright ignore given QoS policies, sanity check them
