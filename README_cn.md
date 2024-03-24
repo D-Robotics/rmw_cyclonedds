@@ -1,4 +1,4 @@
-English| [简体中文](./README_cn.md)
+[English](./README.md) | 简体中文
 
 # ROS 2 RMW for Eclipse Cyclone DDS
 
@@ -49,7 +49,8 @@ Here are some ways to generate additional debugging info that can help identify 
   * To see the output live:
 
     `export CYCLONEDDS_URI='<Tracing><Verbosity>trace</><Out>stderr</></>'`
-* To send to `/var/log/`:
+
+  * To send to `/var/log/`:
 
     `export CYCLONEDDS_URI='<Tracing><Verbosity>trace</><Out>/var/log/cyclonedds.${CYCLONEDDS_PID}.log</></>'`
 
